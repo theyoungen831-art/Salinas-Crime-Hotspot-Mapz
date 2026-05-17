@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Salinas Crime Map</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+
+:root {
+  --bg: #080810;
+  --surface: #0f0f1a;
+  --card: #151522;
+  --border: #1f1f30;
+  --text: #f0f0ff;
+  --muted: #5a5a7a;
+  --mono: ui-monospace, 'SF Mono', Menlo, monospace;
+  --display: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+  --homicide:#ff2d2d; --shooting:#ff6b00; --robbery:#f5c400;
+  --assault:#bf00ff; --vehicle:#00c2ff; --gang:#ff007f; --theft:#00e676;
+}
+
+html, body {
+  height: 100%; width: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  touch-action: manipulation;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; position: relative; }
+
+#topbar {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 500;
+  padding: max(12px, env(safe-area-inset-top)) 14px 8px;
+  background: linear-gradient(to bottom, rgba(8,8,16,0.96) 70%, transparent);
+  pointer-events: none;
+}
+.topbar-inner { display: flex; align-items: center; justify-content: space-between; pointer-events: all; }
+.app-title { font-family: var(--display); font-size: 1.25rem; font-weight: 800; line-height: 1; }
+.app-title span { color: var(--homicide); }
+.year-pill { font-size: 0.6rem; letter-spacing: 0.12em; color: var(--muted); margin-top: 3px; }
+.count-badge {
+  background: var(--card); border: 1px solid var(--border); border-radius: 20px;
+  padding: 5px 12px; font-size: 0.65rem; display: flex; align-items: center; gap: 6px;
+}
+.count-badge .num { font-size: 1rem; font-weight: 600; color: var(--homicide); font-family: var(--display); }
+
+#map { position: absolute; inset: 0; z-index: 1; background: #0a0a18; }
+#canvas-map { position: absolute; inset: 0; z-index: 1; display: none; background: #0a0a18; }
+#canvas-map.active { display: block; }
+
+#loading {
+  position: absolute; inset: 0; z-index: 100;
+  background: var(--bg);
+  display: flex; align-items: center; justify-content: center;
+  flex-direction: column; gap: 12px;
+  color: var(--muted); font-size: 0.65rem; letter-spacing: 0.15em; text-transform: uppercase;
+}
+#loading.hidden { display: none; }
+.spinner {
+  width: 40px; height: 40px;
+  border: 2px solid var(--border); border-top-color: var(--homicide);
+  border-radius: 50%; animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+#sheet {
+  position: absolute; bottom: 0; left: 0; right: 0; z-index: 400;
+  background: var(--surface);
+  border-radius: 20px 20px 0 0;
+  border-top: 1px solid var(--border);
+  padding-bottom: env(safe-area-inset-bottom, 16px);
+  transform: translateY(0);
+  transition: transform 0.35s cubic-bezier(0.32, 0.72, 0, 1);
+  max-height: 75dvh;
+  display: flex; flex-direction: column;
+}
+#sheet.collapsed { transform: translateY(calc(100% - 130px)); }
+
+.sheet-handle { width: 36px; height: 4px; background: var(--border); border-radius: 2px; margin: 10px auto 0; }
+.sheet-tabs { display: flex; padding: 10px 14px 0; gap: 6px; }
+
+.tab-btn {
+  flex: 1;
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  color: var(--muted); font-family: var(--mono); font-size: 0.6rem;
+  letter-spacing: 0.1em; padding: 8px 4px; text-transform: uppercase; cursor: pointer;
+}
+.tab-btn.active { background: var(--text); border-color: var(--text); color: var(--bg); font-weight: 600; }
+
+#tab-legend, #tab-feed {
+  padding: 14px 14px 8px; overflow-y: auto; flex: 1;
+  display: flex; flex-direction: column; gap: 8px;
+  -webkit-overflow-scrolling: touch;
+}
+#tab-feed { display: none; }
+
+.legend-row {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 12px; padding: 10px 14px;
+  user-select: none;
+}
+.legend-row.off { opacity: 0.4; }
+.color-swatch { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; box-shadow: 0 0 8px currentColor; }
+.cr-label { flex: 1; font-size: 0.78rem; letter-spacing: 0.05em; text-transform: uppercase; }
+.cr-count { font-size: 0.65rem; color: var(--muted); }
+.toggle-icon { font-size: 1rem; width: 22px; text-align: center; }
+
+.feed-card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 12px; padding: 10px 12px;
+  border-left: 3px solid transparent;
+  display: flex; gap: 10px; align-items: flex-start;
+}
+.feed-dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 4px; flex-shrink: 0; }
+.feed-body { flex: 1; min-width: 0; }
+.feed-type { font-family: var(--display); font-size: 0.85rem; font-weight: 700; text-transform: uppercase; }
+.feed-meta { font-size: 0.55rem; color: var(--muted); letter-spacing: 0.1em; margin-top: 1px; }
+.feed-area { font-size: 0.62rem; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+#year-scroll {
+  position: absolute; bottom: 136px; left: 0; right: 0; z-index: 450;
+  overflow-x: auto; display: flex; gap: 6px; padding: 0 14px;
+  scrollbar-width: none; -webkit-overflow-scrolling: touch;
+}
+#year-scroll::-webkit-scrollbar { display: none; }
+
+.yr-chip {
+  flex-shrink: 0;
+  background: rgba(15,15,26,0.92); border: 1px solid var(--border);
+  border-radius: 20px; color: var(--muted); font-family: var(--mono);
+  font-size: 0.6rem; padding: 6px 12px; cursor: pointer;
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  white-space: nowrap; letter-spacing: 0.08em;
+}
+.yr-chip.active { background: var(--text); border-color: var(--text); color: var(--bg); font-weight: 600; }
+
+.leaflet-popup-content-wrapper {
+  background: var(--card) !important; border: 1px solid var(--border) !important;
+  border-radius: 14px !important; color: var(--text) !important;
+  font-family: var(--mono) !important; padding: 0 !important;
+}
+.leaflet-popup-content { margin: 0 !important; width: 220px !important; }
+.leaflet-popup-tip-container { display: none; }
+.popup-body { padding: 12px; }
+.popup-type { font-family: var(--display); font-size: 1rem; font-weight: 800; text-transform: uppercase; }
+.popup-meta { font-size: 0.55rem; color: var(--muted); margin: 3px 0 8px; }
+.popup-area { font-size: 0.7rem; margin-bottom: 6px; }
+.popup-desc { font-size: 0.58rem; color: #8888aa; line-height: 1.55; border-top: 1px solid var(--border); padding-top: 8px; }
+
+.leaflet-control-zoom { border: 1px solid var(--border) !important; border-radius: 10px !important; overflow: hidden; margin-right: 14px !important; margin-top: 80px !important; }
+.leaflet-control-zoom a { background: var(--card) !important; color: var(--text) !important; width: 34px !important; height: 34px !important; line-height: 34px !important; }
+.leaflet-control-attribution { background: rgba(8,8,16,0.7) !important; color: var(--muted) !important; font-size: 8px !important; }
+.leaflet-control-attribution a { color: var(--muted) !important; }
+
+.selected-info {
+  position: absolute; top: 85px; left: 14px; right: 14px;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 12px; padding: 12px 14px; z-index: 350;
+  display: none;
+}
+.selected-info.show { display: block; }
+.mode-tag {
+  position: absolute; top: 85px; right: 14px; z-index: 350;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 8px; padding: 4px 8px;
+  font-size: 0.55rem; letter-spacing: 0.1em; color: var(--muted);
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="topbar">
+    <div class="topbar-inner">
+      <div>
+        <div class="app-title">Salinas<span>.</span>Crime</div>
+        <div class="year-pill">MONTEREY CO · 93901 · 93905</div>
+      </div>
+      <div class="count-badge">
+        <span class="num" id="badge-count">60</span>
+        <span>incidents</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="map"></div>
+  <canvas id="canvas-map"></canvas>
+
+  <div id="loading">
+    <div class="spinner"></div>
+    <div>Loading map…</div>
+  </div>
+
+  <div class="selected-info" id="selected-info"></div>
+  <div class="mode-tag" id="mode-tag" style="display:none">OFFLINE MODE</div>
+
+  <div id="year-scroll">
+    <div class="yr-chip active" data-year="all">All Years</div>
+    <div class="yr-chip" data-year="2015">2015</div>
+    <div class="yr-chip" data-year="2016">2016</div>
+    <div class="yr-chip" data-year="2017">2017</div>
+    <div class="yr-chip" data-year="2018">2018</div>
+    <div class="yr-chip" data-year="2019">2019</div>
+    <div class="yr-chip" data-year="2020">2020</div>
+    <div class="yr-chip" data-year="2021">2021</div>
+    <div class="yr-chip" data-year="2022">2022</div>
+    <div class="yr-chip" data-year="2023">2023</div>
+    <div class="yr-chip" data-year="2024">2024</div>
+  </div>
+
+  <div id="sheet" class="collapsed">
+    <div class="sheet-handle" id="sheet-handle"></div>
+    <div class="sheet-tabs">
+      <button class="tab-btn active" data-tab="legend">Legend & Toggle</button>
+      <button class="tab-btn" data-tab="feed">Incident Log</button>
+    </div>
+    <div id="tab-legend"></div>
+    <div id="tab-feed"></div>
+  </div>
+</div>
+
+<script>
+const CRIMES = {
+  homicide: { label: 'Homicide / Murder', color: '#ff2d2d', radius: 14, emoji: '💀' },
+  shooting: { label: 'Shooting',          color: '#ff6b00', radius: 12, emoji: '🔫' },
+  robbery:  { label: 'Robbery',           color: '#f5c400', radius: 11, emoji: '🏃' },
+  assault:  { label: 'Aggravated Assault',color: '#bf00ff', radius: 11, emoji: '⚡' },
+  vehicle:  { label: 'Vehicle Theft',     color: '#00c2ff', radius: 10, emoji: '🚗' },
+  gang:     { label: 'Gang Activity',     color: '#ff007f', radius: 12, emoji: '⚠️' },
+  theft:    { label: 'Theft / Burglary',  color: '#00e676', radius: 9,  emoji: '🔓' },
+};
+
+const visible = {};
+Object.keys(CRIMES).forEach(k => visible[k] = true);
+
+const incidents = [
+  { id:1, year:2015, type:'homicide', lat:36.6780, lng:-121.6250, area:'East Salinas / Acosta Plaza', desc:'40 homicides in 2015 — highest in years.' },
+  { id:2, year:2015, type:'homicide', lat:36.6711, lng:-121.6420, area:'Hebbron Heights', desc:'Fatal shooting. 34 fatal shootings citywide.' },
+  { id:3, year:2015, type:'shooting', lat:36.6830, lng:-121.6170, area:'East Alisal', desc:'Non-fatal shooting. 120 non-fatal in 2015.' },
+  { id:4, year:2015, type:'robbery', lat:36.6694, lng:-121.6550, area:'Downtown / Main St', desc:'Armed robbery. 369 in 2015.' },
+  { id:5, year:2015, type:'assault', lat:36.6860, lng:-121.6310, area:'Alisal District', desc:'613 aggravated assaults in 2015.' },
+  { id:6, year:2015, type:'vehicle', lat:36.6620, lng:-121.6300, area:'N. Main / Market', desc:'4,336 property crimes in 2015.' },
+  { id:7, year:2015, type:'gang', lat:36.6770, lng:-121.6180, area:'East Salinas District 52', desc:'Gang activity primary hotspot.' },
+  { id:8, year:2015, type:'theft', lat:36.6650, lng:-121.6460, area:'Central Salinas', desc:'Burglary. Property crime largest category.' },
+  { id:9, year:2016, type:'homicide', lat:36.6795, lng:-121.6270, area:'East Salinas', desc:'36 homicides in 2016.' },
+  { id:10, year:2016, type:'shooting', lat:36.6720, lng:-121.6400, area:'Hebbron Heights', desc:'31 fatal / 104 non-fatal in 2016.' },
+  { id:11, year:2016, type:'robbery', lat:36.6680, lng:-121.6540, area:'Alisal St / Downtown', desc:'325 robberies in 2016.' },
+  { id:12, year:2016, type:'assault', lat:36.6850, lng:-121.6330, area:'Alisal District', desc:'559 assaults in 2016.' },
+  { id:13, year:2016, type:'gang', lat:36.6740, lng:-121.6210, area:'East Salinas', desc:'Gang incident near rec center.' },
+  { id:14, year:2016, type:'theft', lat:36.6660, lng:-121.6480, area:'Central / Lincoln Ave', desc:'Theft in commercial zone.' },
+  { id:15, year:2017, type:'homicide', lat:36.6760, lng:-121.6260, area:'East Salinas', desc:'29 homicides in 2017.' },
+  { id:16, year:2017, type:'shooting', lat:36.6730, lng:-121.6390, area:'Hebbron Area', desc:'23 fatal / 89 non-fatal in 2017.' },
+  { id:17, year:2017, type:'robbery', lat:36.6670, lng:-121.6520, area:'Downtown', desc:'358 robberies in 2017.' },
+  { id:18, year:2017, type:'assault', lat:36.6880, lng:-121.6290, area:'North Salinas', desc:'564 assaults in 2017.' },
+  { id:19, year:2017, type:'vehicle', lat:36.6590, lng:-121.6350, area:'Market / N Main', desc:'Vehicle theft consistently high.' },
+  { id:20, year:2017, type:'theft', lat:36.6645, lng:-121.6465, area:'Central Salinas', desc:'Burglary in residential area.' },
+  { id:21, year:2018, type:'homicide', lat:36.6800, lng:-121.6230, area:'East Salinas', desc:'Gang violence primary driver.' },
+  { id:22, year:2018, type:'shooting', lat:36.6715, lng:-121.6430, area:'Hebbron', desc:'Drive-by shooting.' },
+  { id:23, year:2018, type:'gang', lat:36.6775, lng:-121.6200, area:'East Salinas', desc:'CASP intervention programs active.' },
+  { id:24, year:2018, type:'robbery', lat:36.6660, lng:-121.6510, area:'Alisal / Lincoln', desc:'Commercial robbery.' },
+  { id:25, year:2018, type:'vehicle', lat:36.6610, lng:-121.6320, area:'Central / North', desc:'Highest vehicle theft nationally.' },
+  { id:26, year:2018, type:'theft', lat:36.6670, lng:-121.6470, area:'S. Sanborn', desc:'Burglary.' },
+  { id:27, year:2019, type:'homicide', lat:36.6785, lng:-121.6255, area:'East Salinas', desc:'Elevated per-capita rate.' },
+  { id:28, year:2019, type:'shooting', lat:36.6725, lng:-121.6410, area:'Hebbron Heights', desc:'Non-fatal shooting.' },
+  { id:29, year:2019, type:'assault', lat:36.6855, lng:-121.6300, area:'Alisal St', desc:'Aggravated assault.' },
+  { id:30, year:2019, type:'vehicle', lat:36.6630, lng:-121.6290, area:'N. Main / Market', desc:'1 in 274 chance of car theft.' },
+  { id:31, year:2019, type:'gang', lat:36.6755, lng:-121.6195, area:'East Salinas', desc:'Gang activity per SPD data.' },
+  { id:32, year:2019, type:'theft', lat:36.6643, lng:-121.6458, area:'Central Salinas', desc:'Property crime primary driver.' },
+  { id:33, year:2020, type:'homicide', lat:36.6790, lng:-121.6245, area:'East Salinas', desc:'COVID-19 period homicide.' },
+  { id:34, year:2020, type:'shooting', lat:36.6708, lng:-121.6445, area:'Hebbron Area', desc:'Reduced community programming.' },
+  { id:35, year:2020, type:'robbery', lat:36.6672, lng:-121.6530, area:'Downtown', desc:'Robbery during lockdown.' },
+  { id:36, year:2020, type:'vehicle', lat:36.6605, lng:-121.6340, area:'North Salinas', desc:'Vehicle theft surge.' },
+  { id:37, year:2020, type:'theft', lat:36.6648, lng:-121.6472, area:'Central / E. Market', desc:'Burglary. Property crime up.' },
+  { id:38, year:2021, type:'homicide', lat:36.6782, lng:-121.6252, area:'East Salinas', desc:'11 homicides in 2021.' },
+  { id:39, year:2021, type:'shooting', lat:36.6718, lng:-121.6425, area:'Hebbron', desc:'Shooting in East Alisal.' },
+  { id:40, year:2021, type:'assault', lat:36.6865, lng:-121.6315, area:'Alisal District', desc:'Violent crime declining.' },
+  { id:41, year:2021, type:'vehicle', lat:36.6618, lng:-121.6298, area:'Central / Commercial', desc:'Auto theft top-ranked crime.' },
+  { id:42, year:2021, type:'gang', lat:36.6748, lng:-121.6185, area:'East Salinas', desc:'Gang incident per SPD.' },
+  { id:43, year:2021, type:'theft', lat:36.6635, lng:-121.6462, area:'S. Sanborn', desc:'Residential burglary.' },
+  { id:44, year:2022, type:'homicide', lat:36.6787, lng:-121.6258, area:'East Salinas', desc:'NIBRS reporting adopted.' },
+  { id:45, year:2022, type:'shooting', lat:36.6722, lng:-121.6418, area:'Hebbron', desc:'~246 violent crimes/year East Salinas.' },
+  { id:46, year:2022, type:'robbery', lat:36.6665, lng:-121.6525, area:'Alisal / Commercial', desc:'Elevated property crime NW.' },
+  { id:47, year:2022, type:'vehicle', lat:36.6598, lng:-121.6345, area:'N. Salinas Commercial', desc:'685 vehicle thefts in 2022.' },
+  { id:48, year:2022, type:'theft', lat:36.6641, lng:-121.6460, area:'Central Salinas', desc:'Property crime remains high.' },
+  { id:49, year:2023, type:'homicide', lat:36.6793, lng:-121.6248, area:'East Salinas', desc:'11 homicides in 2023.' },
+  { id:50, year:2023, type:'shooting', lat:36.6712, lng:-121.6432, area:'East Alisal', desc:'Shooting in East Alisal.' },
+  { id:51, year:2023, type:'assault', lat:36.6872, lng:-121.6308, area:'Alisal St / North', desc:'Violent crime 1.46× national avg.' },
+  { id:52, year:2023, type:'vehicle', lat:36.6625, lng:-121.6312, area:'Market / Commercial', desc:'1 in 237 chance of car theft.' },
+  { id:53, year:2023, type:'gang', lat:36.6752, lng:-121.6178, area:'East Salinas', desc:'East Salinas highest crime count.' },
+  { id:54, year:2023, type:'theft', lat:36.6638, lng:-121.6455, area:'Central / Downtown', desc:'Total crime up citywide.' },
+  { id:55, year:2024, type:'homicide', lat:36.6796, lng:-121.6241, area:'East Salinas', desc:'6 homicides in 2024 — down 5.' },
+  { id:56, year:2024, type:'shooting', lat:36.6709, lng:-121.6438, area:'Hebbron / E. Alisal', desc:'East Salinas primary hotspot.' },
+  { id:57, year:2024, type:'robbery', lat:36.6668, lng:-121.6518, area:'Alisal / Downtown', desc:'Crime cost $93M projected.' },
+  { id:58, year:2024, type:'vehicle', lat:36.6602, lng:-121.6338, area:'Commercial / N. Main', desc:'Property crime up 30% YoY.' },
+  { id:59, year:2024, type:'assault', lat:36.6876, lng:-121.6302, area:'North Salinas', desc:'D- grade for violent crime.' },
+  { id:60, year:2024, type:'theft', lat:36.6634, lng:-121.6450, area:'Central / E. Market', desc:'Property crime up 30% YoY.' },
+];
+
+let activeYear = 'all';
+let leafletMarkers = [];
+let map = null;
+let canvasMode = false;
+let selectedIncident = null;
+
+function getFiltered() {
+  return incidents.filter(i => (activeYear === 'all' || i.year === parseInt(activeYear)) && visible[i.type]);
+}
+
+function init() {
+  renderLegend();
+  renderFeed();
+
+  // Try loading Leaflet with 5-second timeout
+  let loaded = false;
+  const timeout = setTimeout(() => {
+    if (!loaded) {
+      document.getElementById('loading').classList.add('hidden');
+      initCanvasMap();
+    }
+  }, 5000);
+
+  if (typeof L !== 'undefined') {
+    loaded = true;
+    clearTimeout(timeout);
+    document.getElementById('loading').classList.add('hidden');
+    initLeafletMap();
+    return;
+  }
+
+  const script = document.createElement('script');
+  script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+  script.onload = () => {
+    loaded = true;
+    clearTimeout(timeout);
+    document.getElementById('loading').classList.add('hidden');
+    if (typeof L !== 'undefined') {
+      initLeafletMap();
+    } else {
+      initCanvasMap();
+    }
+  };
+  script.onerror = () => {
+    loaded = true;
+    clearTimeout(timeout);
+    document.getElementById('loading').classList.add('hidden');
+    initCanvasMap();
+  };
+  document.head.appendChild(script);
+}
+
+function initLeafletMap() {
+  try {
+    map = L.map('map', { center: [36.677, -121.635], zoom: 13, zoomControl: true });
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      attribution: '©OpenStreetMap ©CARTO', maxZoom: 19
+    }).addTo(map);
+    renderLeafletMarkers();
+  } catch(e) {
+    initCanvasMap();
+  }
+}
+
+function renderLeafletMarkers() {
+  if (!map) return;
+  leafletMarkers.forEach(m => map.removeLayer(m));
+  leafletMarkers = [];
+  const filtered = getFiltered();
+  filtered.forEach(inc => {
+    const cfg = CRIMES[inc.type];
+    const c = L.circleMarker([inc.lat, inc.lng], {
+      radius: cfg.radius, color: cfg.color, fillColor: cfg.color,
+      fillOpacity: 0.75, weight: 1.5
+    }).addTo(map);
+    if (inc.year >= 2023) {
+      const g = L.circleMarker([inc.lat, inc.lng], {
+        radius: cfg.radius + 7, color: cfg.color, fillOpacity: 0, weight: 1, opacity: 0.3
+      }).addTo(map);
+      leafletMarkers.push(g);
+    }
+    c.bindPopup(`<div class="popup-body">
+      <div class="popup-type" style="color:${cfg.color}">${cfg.emoji} ${inc.type.toUpperCase()}</div>
+      <div class="popup-meta">${inc.year} · INCIDENT #${inc.id}</div>
+      <div class="popup-area">📍 ${inc.area}</div>
+      <div class="popup-desc">${inc.desc}</div>
+    </div>`, { maxWidth: 240 });
+    leafletMarkers.push(c);
+  });
+  document.getElementById('badge-count').textContent = filtered.length;
+}
+
+function initCanvasMap() {
+  canvasMode = true;
+  document.getElementById('canvas-map').classList.add('active');
+  document.getElementById('mode-tag').style.display = 'block';
+  const canvas = document.getElementById('canvas-map');
+  function resize() {
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = window.innerWidth * dpr;
+    canvas.height = window.innerHeight * dpr;
+    canvas.style.width = window.innerWidth + 'px';
+    canvas.style.height = window.innerHeight + 'px';
+    drawCanvas();
+  }
+  window.addEventListener('resize', resize);
+  resize();
+  canvas.addEventListener('click', e => {
+    const r = canvas.getBoundingClientRect();
+    const hit = findHit(e.clientX - r.left, e.clientY - r.top);
+    if (hit) { selectedIncident = hit; showSelectedInfo(); }
+    else { selectedIncident = null; document.getElementById('selected-info').classList.remove('show'); }
+    drawCanvas();
+  });
+}
+
+function latLngToXY(lat, lng) {
+  const b = { minLat: 36.655, maxLat: 36.695, minLng: -121.660, maxLng: -121.610 };
+  const w = window.innerWidth, h = window.innerHeight;
+  return {
+    x: ((lng - b.minLng) / (b.maxLng - b.minLng)) * w,
+    y: (1 - (lat - b.minLat) / (b.maxLat - b.minLat)) * h
+  };
+}
+
+function findHit(px, py) {
+  const filtered = getFiltered();
+  for (let i = filtered.length - 1; i >= 0; i--) {
+    const inc = filtered[i];
+    const { x, y } = latLngToXY(inc.lat, inc.lng);
+    const r = CRIMES[inc.type].radius + 5;
+    if ((px-x)*(px-x) + (py-y)*(py-y) <= r*r) return inc;
+  }
+  return null;
+}
+
+function drawCanvas() {
+  const canvas = document.getElementById('canvas-map');
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const w = window.innerWidth, h = window.innerHeight;
+
+  ctx.fillStyle = '#0a0a18';
+  ctx.fillRect(0, 0, w, h);
+
+  // Grid
+  ctx.strokeStyle = 'rgba(40, 40, 70, 0.4)';
+  ctx.lineWidth = 0.5;
+  for (let x = 0; x < w; x += 40) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke(); }
+  for (let y = 0; y < h; y += 40) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke(); }
+
+  // Region heat
+  ctx.fillStyle = 'rgba(255, 45, 45, 0.05)';
+  const es = latLngToXY(36.678, -121.622);
+  ctx.beginPath(); ctx.arc(es.x, es.y, 90, 0, Math.PI*2); ctx.fill();
+
+  // Region labels
+  ctx.fillStyle = 'rgba(140, 140, 180, 0.6)';
+  ctx.font = 'bold 9px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('EAST SALINAS', es.x + 35, es.y);
+  const dt = latLngToXY(36.669, -121.654);
+  ctx.fillText('DOWNTOWN', dt.x - 75, dt.y);
+  const al = latLngToXY(36.687, -121.630);
+  ctx.fillText('ALISAL', al.x + 20, al.y);
+
+  // Center label
+  ctx.fillStyle = 'rgba(90, 90, 122, 0.4)';
+  ctx.font = '10px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('SALINAS, CA — TAP DOTS FOR DETAILS', w/2, 40);
+
+  // Draw markers
+  const filtered = getFiltered();
+  filtered.forEach(inc => {
+    const cfg = CRIMES[inc.type];
+    const { x, y } = latLngToXY(inc.lat, inc.lng);
+    if (inc.year >= 2023) {
+      ctx.beginPath();
+      ctx.arc(x, y, cfg.radius + 6, 0, Math.PI*2);
+      ctx.strokeStyle = cfg.color + '55';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.arc(x, y, cfg.radius * 0.8, 0, Math.PI*2);
+    ctx.fillStyle = cfg.color;
+    ctx.globalAlpha = 0.75;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = cfg.color;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    if (selectedIncident && selectedIncident.id === inc.id) {
+      ctx.beginPath();
+      ctx.arc(x, y, cfg.radius + 9, 0, Math.PI*2);
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+  });
+
+  document.getElementById('badge-count').textContent = filtered.length;
+}
+
+function showSelectedInfo() {
+  if (!selectedIncident) return;
+  const cfg = CRIMES[selectedIncident.type];
+  const info = document.getElementById('selected-info');
+  info.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+      <span style="font-size:1.1rem">${cfg.emoji}</span>
+      <span style="font-family:var(--display);font-weight:800;text-transform:uppercase;color:${cfg.color};font-size:0.9rem;">${selectedIncident.type}</span>
+      <span style="font-size:0.55rem;color:var(--muted);margin-left:auto;">${selectedIncident.year} · #${selectedIncident.id}</span>
+    </div>
+    <div style="font-size:0.7rem;margin-bottom:4px;">📍 ${selectedIncident.area}</div>
+    <div style="font-size:0.58rem;color:#8888aa;line-height:1.5;">${selectedIncident.desc}</div>
+  `;
+  info.classList.add('show');
+}
+
+function renderLegend() {
+  const filtered = getFiltered();
+  const counts = {};
+  Object.keys(CRIMES).forEach(k => counts[k] = 0);
+  filtered.forEach(i => counts[i.type]++);
+  document.getElementById('tab-legend').innerHTML = Object.entries(CRIMES).map(([k, c]) => `
+    <div class="legend-row ${visible[k] ? '' : 'off'}" onclick="toggleType('${k}')">
+      <div class="color-swatch" style="background:${c.color}; color:${c.color}"></div>
+      <div class="cr-label">${c.label}</div>
+      <div class="cr-count">${counts[k]}</div>
+      <div class="toggle-icon">${visible[k] ? '👁' : '🚫'}</div>
+    </div>`).join('');
+}
+
+function renderFeed() {
+  const sorted = [...getFiltered()].sort((a, b) => b.year - a.year);
+  const c = document.getElementById('tab-feed');
+  if (!sorted.length) {
+    c.innerHTML = '<div style="padding:30px;text-align:center;color:var(--muted);font-size:0.65rem;">NO INCIDENTS MATCH FILTER</div>';
+    return;
+  }
+  c.innerHTML = sorted.map(inc => {
+    const cfg = CRIMES[inc.type];
+    return `<div class="feed-card" onclick="zoomTo(${inc.lat},${inc.lng},${inc.id})" style="border-left-color:${cfg.color}">
+      <div class="feed-dot" style="background:${cfg.color}; box-shadow:0 0 6px ${cfg.color}"></div>
+      <div class="feed-body">
+        <div class="feed-type" style="color:${cfg.color}">${cfg.emoji} ${inc.type}</div>
+        <div class="feed-meta">${inc.year} · #${inc.id}</div>
+        <div class="feed-area">${inc.area}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function refresh() {
+  if (canvasMode) drawCanvas();
+  else if (map) renderLeafletMarkers();
+  renderLegend();
+  renderFeed();
+  document.getElementById('badge-count').textContent = getFiltered().length;
+}
+
+function toggleType(t) { visible[t] = !visible[t]; refresh(); }
+
+function zoomTo(lat, lng, id) {
+  if (map) {
+    map.setView([lat, lng], 16);
+    setTimeout(() => {
+      leafletMarkers.forEach(m => {
+        if (m.getLatLng && Math.abs(m.getLatLng().lat - lat) < 0.001) m.openPopup();
+      });
+    }, 300);
+  } else if (canvasMode) {
+    selectedIncident = incidents.find(i => i.id === id);
+    showSelectedInfo();
+    drawCanvas();
+  }
+  closeSheet();
+}
+
+document.querySelectorAll('.yr-chip').forEach(chip => {
+  chip.addEventListener('click', () => {
+    document.querySelectorAll('.yr-chip').forEach(c => c.classList.remove('active'));
+    chip.classList.add('active');
+    activeYear = chip.dataset.year;
+    refresh();
+  });
+});
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const t = btn.dataset.tab;
+    document.getElementById('tab-legend').style.display = t === 'legend' ? 'flex' : 'none';
+    document.getElementById('tab-feed').style.display = t === 'feed' ? 'flex' : 'none';
+  });
+});
+
+const sheet = document.getElementById('sheet');
+const handle = document.getElementById('sheet-handle');
+let sheetOpen = false;
+function openSheet() { sheet.classList.remove('collapsed'); sheetOpen = true; }
+function closeSheet() { sheet.classList.add('collapsed'); sheetOpen = false; }
+handle.addEventListener('click', () => sheetOpen ? closeSheet() : openSheet());
+let touchStartY = 0;
+sheet.addEventListener('touchstart', e => { touchStartY = e.touches[0].clientY; }, { passive: true });
+sheet.addEventListener('touchend', e => {
+  const dy = e.changedTouches[0].clientY - touchStartY;
+  if (dy > 40) closeSheet();
+  if (dy < -40) openSheet();
+}, { passive: true });
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
+</script>
+</body>
+</html>
