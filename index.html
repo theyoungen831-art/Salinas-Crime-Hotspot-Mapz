@@ -28,7 +28,7 @@
 html, body {
   height: 100%; width: 100%;
   overflow: hidden;
-  background: var(--bg);
+  background: linear-gradient(180deg, #0a0e1e 0%, #0d1320 50%, #0d1815 100%);
   color: var(--text);
   font-family: var(--mono);
   touch-action: manipulation;
@@ -36,6 +36,20 @@ html, body {
 }
 
 #app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; position: relative; }
+
+/* Ambient color blobs in background (visible during loading and as map fallback texture) */
+#app::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 20% 30%, rgba(255, 45, 45, 0.08) 0%, transparent 40%),
+    radial-gradient(circle at 80% 20%, rgba(0, 194, 255, 0.06) 0%, transparent 40%),
+    radial-gradient(circle at 60% 80%, rgba(191, 0, 255, 0.05) 0%, transparent 40%),
+    radial-gradient(circle at 30% 90%, rgba(0, 230, 118, 0.04) 0%, transparent 40%);
+  pointer-events: none;
+  z-index: 0;
+}
 
 /* ─── TOP BAR ─── */
 #topbar {
@@ -66,8 +80,8 @@ html, body {
 }
 .icon-btn:active { transform: scale(0.92); background: var(--card-hover); }
 
-#map { position: absolute; inset: 0; z-index: 1; background: #0a0a18; }
-#canvas-map { position: absolute; inset: 0; z-index: 1; display: none; background: #0a0a18; }
+#map { position: absolute; inset: 0; z-index: 1; background: linear-gradient(180deg, #0a0e1e 0%, #0d1320 50%, #0d1815 100%); }
+#canvas-map { position: absolute; inset: 0; z-index: 1; display: none; background: linear-gradient(180deg, #0a0e1e 0%, #0d1320 50%, #0d1815 100%); }
 #canvas-map.active { display: block; }
 
 #loading {
@@ -763,49 +777,275 @@ function drawCanvas() {
   const dpr = window.devicePixelRatio || 1;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const w = window.innerWidth, h = window.innerHeight;
-  ctx.fillStyle = '#0a0a18';
+
+  // LAYER 1: Atmospheric gradient (night sky → valley green)
+  const bgGrad = ctx.createLinearGradient(0, 0, 0, h);
+  bgGrad.addColorStop(0, '#0a0e1e');
+  bgGrad.addColorStop(0.5, '#0d1320');
+  bgGrad.addColorStop(1, '#0d1815');
+  ctx.fillStyle = bgGrad;
   ctx.fillRect(0, 0, w, h);
-  ctx.strokeStyle = 'rgba(40, 40, 70, 0.4)';
+
+  // LAYER 2: Mountain ranges
+  ctx.fillStyle = 'rgba(40, 35, 60, 0.5)';
+  ctx.beginPath();
+  ctx.moveTo(0, h * 0.55);
+  ctx.lineTo(w * 0.08, h * 0.42);
+  ctx.lineTo(w * 0.14, h * 0.48);
+  ctx.lineTo(w * 0.22, h * 0.38);
+  ctx.lineTo(w * 0.28, h * 0.45);
+  ctx.lineTo(w * 0.32, h * 0.52);
+  ctx.lineTo(0, h * 0.52);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = 'rgba(45, 30, 50, 0.5)';
+  ctx.beginPath();
+  ctx.moveTo(w, h * 0.50);
+  ctx.lineTo(w * 0.92, h * 0.38);
+  ctx.lineTo(w * 0.85, h * 0.46);
+  ctx.lineTo(w * 0.78, h * 0.35);
+  ctx.lineTo(w * 0.70, h * 0.44);
+  ctx.lineTo(w * 0.65, h * 0.52);
+  ctx.lineTo(w, h * 0.52);
+  ctx.closePath();
+  ctx.fill();
+
+  // LAYER 3: Salinas River
+  ctx.strokeStyle = 'rgba(50, 90, 130, 0.4)';
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.moveTo(0, h * 0.65);
+  ctx.bezierCurveTo(w * 0.25, h * 0.7, w * 0.4, h * 0.55, w * 0.6, h * 0.62);
+  ctx.bezierCurveTo(w * 0.75, h * 0.68, w * 0.85, h * 0.55, w, h * 0.58);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(80, 130, 180, 0.25)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // LAYER 4: Agricultural fields (Salinas = Salad Bowl of America)
+  const fields = [
+    { x: 0.05, y: 0.78, w: 0.18, h: 0.12 },
+    { x: 0.24, y: 0.82, w: 0.14, h: 0.10 },
+    { x: 0.42, y: 0.80, w: 0.16, h: 0.13 },
+    { x: 0.62, y: 0.84, w: 0.12, h: 0.10 },
+    { x: 0.78, y: 0.78, w: 0.16, h: 0.13 },
+  ];
+  fields.forEach((f, idx) => {
+    ctx.fillStyle = `rgba(40, 75, 50, ${0.15 + (idx % 3) * 0.04})`;
+    ctx.fillRect(f.x * w, f.y * h, f.w * w, f.h * h);
+    ctx.strokeStyle = 'rgba(60, 100, 70, 0.15)';
+    ctx.lineWidth = 0.5;
+    for (let i = 0; i < 8; i++) {
+      ctx.beginPath();
+      ctx.moveTo(f.x * w, f.y * h + (i * f.h * h / 8));
+      ctx.lineTo((f.x + f.w) * w, f.y * h + (i * f.h * h / 8));
+      ctx.stroke();
+    }
+  });
+
+  // LAYER 5: Highway 101
+  ctx.strokeStyle = 'rgba(255, 220, 130, 0.08)';
+  ctx.lineWidth = 8;
+  ctx.beginPath();
+  ctx.moveTo(w * 0.15, 0);
+  ctx.bezierCurveTo(w * 0.35, h * 0.3, w * 0.55, h * 0.5, w * 0.75, h);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(255, 200, 100, 0.22)';
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+
+  // Route 68
+  ctx.strokeStyle = 'rgba(200, 180, 100, 0.15)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, h * 0.5);
+  ctx.bezierCurveTo(w * 0.3, h * 0.48, w * 0.6, h * 0.52, w, h * 0.49);
+  ctx.stroke();
+
+  // LAYER 6: Street grid
+  ctx.strokeStyle = 'rgba(70, 80, 110, 0.18)';
   ctx.lineWidth = 0.5;
-  for (let x = 0; x < w; x += 40) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke(); }
-  for (let y = 0; y < h; y += 40) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke(); }
-  ctx.fillStyle = 'rgba(255, 45, 45, 0.05)';
+  for (let x = 0; x < w; x += 40) {
+    ctx.beginPath();
+    ctx.moveTo(x, h * 0.35);
+    ctx.lineTo(x + 8, h);
+    ctx.stroke();
+  }
+  for (let y = h * 0.35; y < h; y += 40) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(w, y + 6);
+    ctx.stroke();
+  }
+
+  // LAYER 7: City zone color tints
   const es = latLngToXY(36.678, -121.622);
-  ctx.beginPath(); ctx.arc(es.x, es.y, 90, 0, Math.PI*2); ctx.fill();
-  ctx.fillStyle = 'rgba(140, 140, 180, 0.6)';
-  ctx.font = 'bold 9px monospace';
-  ctx.textAlign = 'left';
-  ctx.fillText('EAST SALINAS', es.x + 35, es.y);
+  const esGrad = ctx.createRadialGradient(es.x, es.y, 0, es.x, es.y, 110);
+  esGrad.addColorStop(0, 'rgba(255, 45, 45, 0.12)');
+  esGrad.addColorStop(0.5, 'rgba(255, 45, 45, 0.04)');
+  esGrad.addColorStop(1, 'rgba(255, 45, 45, 0)');
+  ctx.fillStyle = esGrad;
+  ctx.beginPath();
+  ctx.arc(es.x, es.y, 110, 0, Math.PI * 2);
+  ctx.fill();
+
   const dt = latLngToXY(36.669, -121.654);
-  ctx.fillText('DOWNTOWN', dt.x - 75, dt.y);
+  const dtGrad = ctx.createRadialGradient(dt.x, dt.y, 0, dt.x, dt.y, 80);
+  dtGrad.addColorStop(0, 'rgba(245, 196, 0, 0.08)');
+  dtGrad.addColorStop(1, 'rgba(245, 196, 0, 0)');
+  ctx.fillStyle = dtGrad;
+  ctx.beginPath();
+  ctx.arc(dt.x, dt.y, 80, 0, Math.PI * 2);
+  ctx.fill();
+
   const al = latLngToXY(36.687, -121.630);
-  ctx.fillText('ALISAL', al.x + 20, al.y);
-  ctx.fillStyle = 'rgba(90, 90, 122, 0.4)';
-  ctx.font = '10px monospace';
+  const alGrad = ctx.createRadialGradient(al.x, al.y, 0, al.x, al.y, 90);
+  alGrad.addColorStop(0, 'rgba(191, 0, 255, 0.07)');
+  alGrad.addColorStop(1, 'rgba(191, 0, 255, 0)');
+  ctx.fillStyle = alGrad;
+  ctx.beginPath();
+  ctx.arc(al.x, al.y, 90, 0, Math.PI * 2);
+  ctx.fill();
+
+  const ns = latLngToXY(36.692, -121.650);
+  const nsGrad = ctx.createRadialGradient(ns.x, ns.y, 0, ns.x, ns.y, 70);
+  nsGrad.addColorStop(0, 'rgba(0, 194, 255, 0.06)');
+  nsGrad.addColorStop(1, 'rgba(0, 194, 255, 0)');
+  ctx.fillStyle = nsGrad;
+  ctx.beginPath();
+  ctx.arc(ns.x, ns.y, 70, 0, Math.PI * 2);
+  ctx.fill();
+
+  // LAYER 8: Parks
+  ctx.fillStyle = 'rgba(40, 90, 50, 0.3)';
+  const park1 = latLngToXY(36.682, -121.628);
+  ctx.beginPath();
+  ctx.ellipse(park1.x, park1.y, 22, 14, 0.3, 0, Math.PI * 2);
+  ctx.fill();
+  const park2 = latLngToXY(36.665, -121.640);
+  ctx.beginPath();
+  ctx.ellipse(park2.x, park2.y, 16, 11, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // LAYER 9: Labels
+  ctx.fillStyle = 'rgba(220, 220, 240, 0.75)';
+  ctx.font = 'bold 10px -apple-system, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('EAST SALINAS', es.x + 38, es.y);
+  ctx.fillStyle = 'rgba(180, 180, 210, 0.55)';
+  ctx.font = '8px -apple-system, sans-serif';
+  ctx.fillText('Acosta · Hebbron · Alisal', es.x + 38, es.y + 12);
+
+  ctx.fillStyle = 'rgba(220, 220, 240, 0.75)';
+  ctx.font = 'bold 10px -apple-system, sans-serif';
+  ctx.fillText('DOWNTOWN', dt.x - 80, dt.y);
+  ctx.fillStyle = 'rgba(180, 180, 210, 0.55)';
+  ctx.font = '8px -apple-system, sans-serif';
+  ctx.fillText('Main · Lincoln', dt.x - 80, dt.y + 12);
+
+  ctx.fillStyle = 'rgba(220, 220, 240, 0.75)';
+  ctx.font = 'bold 10px -apple-system, sans-serif';
+  ctx.fillText('ALISAL', al.x + 25, al.y);
+  ctx.fillText('N. MAIN', ns.x + 25, ns.y);
+
+  ctx.fillStyle = 'rgba(120, 120, 160, 0.45)';
+  ctx.font = 'italic 8px -apple-system, sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('SALINAS, CA — TAP DOTS FOR DETAILS', w/2, 40);
+  ctx.fillText('SANTA LUCIA MTS', w * 0.15, h * 0.55);
+  ctx.fillText('GABILAN RANGE', w * 0.82, h * 0.55);
+  ctx.fillText('SALINAS RIVER', w * 0.5, h * 0.66);
+  ctx.fillText('SALINAS VALLEY FARMS', w * 0.5, h * 0.95);
+
+  ctx.fillStyle = 'rgba(140, 140, 180, 0.5)';
+  ctx.font = 'bold 10px monospace';
+  ctx.fillText('SALINAS, CA — TAP DOTS FOR DETAILS', w/2, 100);
+
+  // Compass rose
+  ctx.save();
+  ctx.translate(w - 36, 130);
+  ctx.fillStyle = 'rgba(180, 180, 210, 0.55)';
+  ctx.font = 'bold 9px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('N', 0, -16);
+  ctx.fillText('S', 0, 22);
+  ctx.fillText('W', -18, 4);
+  ctx.fillText('E', 18, 4);
+  ctx.strokeStyle = 'rgba(180, 180, 210, 0.3)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(0, 0, 14, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(0, -10);
+  ctx.lineTo(3, 0);
+  ctx.lineTo(0, 10);
+  ctx.lineTo(-3, 0);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(255, 100, 100, 0.5)';
+  ctx.fill();
+  ctx.restore();
+
+  // LAYER 10: Stars in sky
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+  for (let i = 0; i < 30; i++) {
+    const sx = Math.abs((Math.sin(i * 12.9898) * 43758.5453) % w);
+    const sy = Math.abs((Math.sin(i * 78.233) * 43758.5453) % (h * 0.3));
+    const size = (Math.sin(i * 7.3) + 1.5) * 0.7;
+    ctx.beginPath();
+    ctx.arc(sx, sy, size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // LAYER 11: Crime markers
   const filtered = getFiltered();
   filtered.forEach(inc => {
     const cfg = CRIMES[inc.type];
     const { x, y } = latLngToXY(inc.lat, inc.lng);
+
     if (inc.year >= 2024) {
+      const glow = ctx.createRadialGradient(x, y, 0, x, y, cfg.radius + 12);
+      glow.addColorStop(0, cfg.color + '88');
+      glow.addColorStop(0.6, cfg.color + '22');
+      glow.addColorStop(1, cfg.color + '00');
+      ctx.fillStyle = glow;
       ctx.beginPath();
-      ctx.arc(x, y, cfg.radius + 6, 0, Math.PI*2);
-      ctx.strokeStyle = cfg.color + '55';
-      ctx.lineWidth = 1; ctx.stroke();
+      ctx.arc(x, y, cfg.radius + 12, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.arc(x, y, cfg.radius + 6, 0, Math.PI * 2);
+      ctx.strokeStyle = cfg.color + '66';
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
     }
+
     ctx.beginPath();
-    ctx.arc(x, y, cfg.radius * 0.8, 0, Math.PI*2);
+    ctx.arc(x, y, cfg.radius * 0.8, 0, Math.PI * 2);
     ctx.fillStyle = cfg.color;
-    ctx.globalAlpha = 0.75; ctx.fill();
+    ctx.globalAlpha = 0.9;
+    ctx.fill();
     ctx.globalAlpha = 1;
-    ctx.strokeStyle = cfg.color; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+
     if (selectedIncident && selectedIncident.id === inc.id) {
       ctx.beginPath();
-      ctx.arc(x, y, cfg.radius + 9, 0, Math.PI*2);
-      ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.arc(x, y, cfg.radius + 10, 0, Math.PI * 2);
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
     }
   });
+
+  // LAYER 12: Vignette
+  const vignette = ctx.createRadialGradient(w/2, h/2, Math.min(w,h) * 0.4, w/2, h/2, Math.max(w,h) * 0.8);
+  vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
+  vignette.addColorStop(1, 'rgba(0, 0, 0, 0.55)');
+  ctx.fillStyle = vignette;
+  ctx.fillRect(0, 0, w, h);
+
   document.getElementById('badge-count').textContent = filtered.length;
 }
 
